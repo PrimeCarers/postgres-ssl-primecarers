@@ -1,6 +1,6 @@
-# SSL-enabled Postgres DB image
+# SSL-enabled Postgres DB image with PostGIS and pgvector
 
-This repository contains the logic to build SSL-enabled Postgres images.
+This repository contains the logic to build SSL-enabled Postgres images with PostGIS and pgvector extensions pre-installed.
 
 By default, when you deploy Postgres from the official Postgres template on
 Railway, the image that is used is built from this repository!
@@ -16,11 +16,31 @@ Since this could pose a problem for applications or services attempting to
 connect to Postgres services, we decided to roll our own Postgres image with SSL
 enabled right out of the box.
 
+### What's included?
+
+In addition to SSL support, this image includes:
+- **PostGIS 3.x**: Geographic objects support for PostgreSQL
+- **pgvector**: Vector similarity search for PostgreSQL, useful for AI/ML applications
+
 ### How does it work?
 
 The Dockerfiles contained in this repository start with the official Postgres
 image as base. Then the `init-ssl.sh` script is copied into the
 `docker-entrypoint-initdb.d/` directory to be executed upon initialization.
+
+### Using PostGIS and pgvector
+
+The PostGIS and pgvector extensions are pre-installed and can be enabled in your database with:
+
+```sql
+-- Enable PostGIS extension
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Enable pgvector extension
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+These extensions are available in all supported PostgreSQL versions (13, 14, 15, 16, 17).
 
 ### Certificate expiry
 

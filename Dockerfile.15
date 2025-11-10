@@ -1,8 +1,13 @@
 ARG POSTGRES_VERSION=15
 FROM postgres:${POSTGRES_VERSION}
 
-# Install OpenSSL and sudo
-RUN apt-get update && apt-get install -y openssl sudo
+# Install OpenSSL, sudo, PostGIS, and pgvector
+RUN apt-get update && apt-get install -y \
+    openssl \
+    sudo \
+    postgresql-15-postgis-3 \
+    postgresql-15-pgvector \
+    && rm -rf /var/lib/apt/lists/*
 
 # Allow the postgres user to execute certain commands as root without a password
 RUN echo "postgres ALL=(root) NOPASSWD: /usr/bin/mkdir, /bin/chown, /usr/bin/openssl" > /etc/sudoers.d/postgres
