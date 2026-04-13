@@ -26,14 +26,39 @@ fi
 
 # --- Auto-resize filesystem to fill the volume ---
 # Railway may grow the block device without resizing the filesystem.
-# This detects the mismatch and runs resize2fs (online, ext4-safe) to
-# expand the filesystem to use all available space on the block device.
+# The device node may not exist in /dev/, so we create it from /proc info.
 if command -v resize2fs &>/dev/null; then
+  # Get the device path that df reports
   VOLUME_DEV=$(findmnt -n -o SOURCE "$EXPECTED_VOLUME_MOUNT_PATH" 2>/dev/null || true)
-  if [ -n "$VOLUME_DEV" ]; then
+
+  # If the device node doesn't exist, create it from /proc/self/mountinfo
+  if [ -n "$VOLUME_DEV" ] && [ ! -e "$VOLUME_DEV" ]; then
+    echo "Device $VOLUME_DEV not found in container, attempting to create it..."
+    DEV_INFO=$(awk -v mp="$EXPECTED_VOLUME_MOUNT_PATH" '$5==mp {print $3}' /proc/self/mountinfo 2>/dev/null || true)
+    if [ -n "$DEV_INFO" ]; then
+      MAJOR=$(echo "$DEV_INFO" | cut -d: -f1)
+      MINOR=$(echo "$DEV_INFO" | cut -d: -f2)
+      echo "Creating block device node: major=$MAJOR minor=$MINOR"
+      if mknod "$VOLUME_DEV" b "$MAJOR" "$MINOR" 2>&1; then
+        echo "Device node created successfully at $VOLUME_DEV"
+      else
+        # Try in /tmp as fallback
+        VOLUME_DEV="/tmp/volume_dev_$$"
+        if mknod "$VOLUME_DEV" b "$MAJOR" "$MINOR" 2>&1; then
+          echo "Device node created at fallback path $VOLUME_DEV"
+        else
+          echo "WARNING: mknod failed — cannot create device node for resize."
+          VOLUME_DEV=""
+        fi
+      fi
+    else
+      echo "WARNING: Could not read device info from /proc/self/mountinfo"
+      VOLUME_DEV=""
+    fi
+  fi
+
+  if [ -n "$VOLUME_DEV" ] && [ -e "$VOLUME_DEV" ]; then
     echo "Checking if filesystem on $VOLUME_DEV needs resizing..."
-    # resize2fs with no size argument expands to fill the device.
-    # It's a no-op if the filesystem is already at full size.
     if resize2fs "$VOLUME_DEV" 2>&1; then
       echo "Filesystem resize complete."
     else
@@ -41,11 +66,33 @@ if command -v resize2fs &>/dev/null; then
     fi
     echo "--- Post-resize df ---"
     df -h "$EXPECTED_VOLUME_MOUNT_PATH" 2>/dev/null || true
-  else
-    echo "WARNING: Could not detect block device for $EXPECTED_VOLUME_MOUNT_PATH"
+    # Clean up temp device node if we created one in /tmp
+    case "$VOLUME_DEV" in /tmp/*) rm -f "$VOLUME_DEV" 2>/dev/null || true ;; esac
   fi
 else
   echo "WARNING: resize2fs not found, skipping filesystem resize check."
+fi
+
+# --- Emergency space cleanup if volume is nearly full ---
+# If available space is less than 32MB, clean up non-essential files so
+# Postgres has room to create a WAL segment after crash recovery.
+AVAIL_KB=$(df --output=avail "$EXPECTED_VOLUME_MOUNT_PATH" 2>/dev/null | tail -1 | tr -d ' ')
+if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 32768 ]; then
+  echo "WARNING: Volume has only ${AVAIL_KB}KB free (<32MB). Running emergency cleanup..."
+  # Stale PID from previous crash (Postgres would remove it anyway)
+  rm -f "$PGDATA/postmaster.pid" 2>/dev/null || true
+  # Temporary stats — safely recreated on startup
+  rm -rf "${PGDATA:?}/pg_stat_tmp"/* 2>/dev/null || true
+  # Logical replication snapshots — recreated when needed
+  rm -rf "${PGDATA:?}/pg_logical/snapshots"/* 2>/dev/null || true
+  # Old log files (older than 1 day)
+  find "$PGDATA/log" -name "*.log" -mtime +0 -delete 2>/dev/null || true
+  find "$PGDATA/pg_log" -name "*.log" -mtime +0 -delete 2>/dev/null || true
+  # Core dumps
+  find "$PGDATA" -maxdepth 1 \( -name "core" -o -name "core.*" \) -delete 2>/dev/null || true
+  NEW_AVAIL_KB=$(df --output=avail "$EXPECTED_VOLUME_MOUNT_PATH" 2>/dev/null | tail -1 | tr -d ' ')
+  echo "Emergency cleanup complete. Available: ${AVAIL_KB}KB -> ${NEW_AVAIL_KB}KB"
+  df -h "$EXPECTED_VOLUME_MOUNT_PATH" 2>/dev/null || true
 fi
 
 # Set up needed variables
@@ -97,6 +144,8 @@ echo "--- df -h (all filesystems) ---"
 df -h 2>/dev/null || true
 echo "--- PGDATA usage ---"
 du -sh "$PGDATA" 2>/dev/null || true
+echo "--- PGDATA breakdown (top-level dirs) ---"
+du -sh "$PGDATA"/*/ 2>/dev/null | sort -rh | head -15 || true
 if [ -d "$PGDATA/pg_wal" ]; then
   echo "--- pg_wal usage ---"
   du -sh "$PGDATA/pg_wal" 2>/dev/null || true
