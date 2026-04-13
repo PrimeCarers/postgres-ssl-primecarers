@@ -60,6 +60,43 @@ unset PGHOST
 ## it ends up being empty
 unset PGPORT
 
+# Ensure Postgres temp files are written to the persistent volume.
+TMPDIR="${PGDATA}/tmp"
+export TMPDIR
+mkdir -p "$TMPDIR"
+chown postgres:postgres "$TMPDIR"
+
+# --- Startup diagnostics ---
+# Log disk usage so we can diagnose "No space left on device" errors
+echo "=== Disk diagnostics (startup) ==="
+echo "--- df -h (all filesystems) ---"
+df -h 2>/dev/null || true
+echo "--- PGDATA usage ---"
+du -sh "$PGDATA" 2>/dev/null || true
+if [ -d "$PGDATA/pg_wal" ]; then
+  echo "--- pg_wal usage ---"
+  du -sh "$PGDATA/pg_wal" 2>/dev/null || true
+  echo "--- pg_wal file count ---"
+  find "$PGDATA/pg_wal" -type f 2>/dev/null | wc -l || true
+  echo "--- pg_wal largest files ---"
+  du -a "$PGDATA/pg_wal" 2>/dev/null | sort -rn | head -10 || true
+fi
+echo "--- inode usage ---"
+df -i 2>/dev/null || true
+echo "=== End disk diagnostics ==="
+
+# --- WAL cleanup before startup ---
+# After repeated crash-recovery cycles, old WAL segments can accumulate
+# and fill the volume. Clean up stale xlogtemp files from prior failed
+# recoveries and remove any old archive status ready files.
+if [ -d "$PGDATA/pg_wal" ]; then
+  STALE_TEMP=$(find "$PGDATA/pg_wal" -name 'xlogtemp.*' -type f 2>/dev/null | wc -l)
+  if [ "$STALE_TEMP" -gt 0 ]; then
+    echo "Cleaning up $STALE_TEMP stale xlogtemp files from pg_wal..."
+    find "$PGDATA/pg_wal" -name 'xlogtemp.*' -type f -delete 2>/dev/null || true
+  fi
+fi
+
 # Call the entrypoint script with the
 # appropriate PGHOST & PGPORT and redirect
 # the output to stdout if LOG_TO_STDOUT is true
