@@ -24,6 +24,30 @@ if [[ ! "$PGDATA" =~ ^"$EXPECTED_VOLUME_MOUNT_PATH" ]]; then
   exit 1
 fi
 
+# --- Auto-resize filesystem to fill the volume ---
+# Railway may grow the block device without resizing the filesystem.
+# This detects the mismatch and runs resize2fs (online, ext4-safe) to
+# expand the filesystem to use all available space on the block device.
+if command -v resize2fs &>/dev/null; then
+  VOLUME_DEV=$(findmnt -n -o SOURCE "$EXPECTED_VOLUME_MOUNT_PATH" 2>/dev/null || true)
+  if [ -n "$VOLUME_DEV" ]; then
+    echo "Checking if filesystem on $VOLUME_DEV needs resizing..."
+    # resize2fs with no size argument expands to fill the device.
+    # It's a no-op if the filesystem is already at full size.
+    if resize2fs "$VOLUME_DEV" 2>&1; then
+      echo "Filesystem resize complete."
+    else
+      echo "WARNING: resize2fs failed (non-fatal, continuing startup)."
+    fi
+    echo "--- Post-resize df ---"
+    df -h "$EXPECTED_VOLUME_MOUNT_PATH" 2>/dev/null || true
+  else
+    echo "WARNING: Could not detect block device for $EXPECTED_VOLUME_MOUNT_PATH"
+  fi
+else
+  echo "WARNING: resize2fs not found, skipping filesystem resize check."
+fi
+
 # Set up needed variables
 SSL_DIR="/var/lib/postgresql/data/certs"
 INIT_SSL_SCRIPT="/docker-entrypoint-initdb.d/init-ssl.sh"

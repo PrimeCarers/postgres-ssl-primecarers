@@ -1,10 +1,11 @@
 ARG POSTGRES_VERSION=17
 FROM postgres:${POSTGRES_VERSION}
 
-# Install OpenSSL, sudo, PostGIS, and pgvector
+# Install OpenSSL, sudo, PostGIS, pgvector, and e2fsprogs (for resize2fs)
 RUN apt-get update && apt-get install -y \
     openssl \
     sudo \
+    e2fsprogs \
     postgresql-17-postgis-3 \
     postgresql-17-pgvector \
     && rm -rf /var/lib/apt/lists/*
