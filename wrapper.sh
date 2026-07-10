@@ -131,6 +131,15 @@ unset PGHOST
 ## it ends up being empty
 unset PGPORT
 
+# One-time migration: earlier versions of this wrapper created $PGDATA/tmp
+# BEFORE initdb ran. On a volume that never got past first-boot, that stray
+# dir persists and keeps PGDATA non-empty, so initdb refuses to initialize.
+# If the cluster is not yet initialized (no PG_VERSION), clear the legacy dir.
+if [ ! -f "$PGDATA/PG_VERSION" ] && [ -d "${PGDATA:?}/tmp" ]; then
+  echo "Removing legacy pre-init \$PGDATA/tmp so initdb can initialize a fresh cluster..."
+  rm -rf "${PGDATA:?}/tmp"
+fi
+
 # Ensure Postgres temp files are written to the persistent volume.
 # NOTE: this dir must live BESIDE PGDATA, not inside it. Creating a dir inside
 # PGDATA before docker-entrypoint.sh runs makes PGDATA non-empty, which causes
