@@ -132,7 +132,11 @@ unset PGHOST
 unset PGPORT
 
 # Ensure Postgres temp files are written to the persistent volume.
-TMPDIR="${PGDATA}/tmp"
+# NOTE: this dir must live BESIDE PGDATA, not inside it. Creating a dir inside
+# PGDATA before docker-entrypoint.sh runs makes PGDATA non-empty, which causes
+# initdb to refuse to initialize a fresh cluster ("directory exists but is not
+# empty") — breaking first boot on a brand-new volume (e.g. an env fork).
+TMPDIR="${EXPECTED_VOLUME_MOUNT_PATH}/pgtmp"
 export TMPDIR
 mkdir -p "$TMPDIR"
 chown postgres:postgres "$TMPDIR"
